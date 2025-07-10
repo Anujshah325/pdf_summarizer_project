@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF Summary</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f0fff4; /* Very light mint green for an adorable feel */
+            color: #333;
+        }
+        /* Simple spinner animation */
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .spinner {
+            border: 4px solid rgba(0, 0, 0, 0.1);
+            border-top: 4px solid #22c55e; /* Green-500 */
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            animation: spin 1s linear infinite;
+        }
+    </style>
+</head>
+<body class="flex items-center justify-center min-h-screen p-4">
+    <div class="bg-white rounded-3xl shadow-2xl p-8 sm:p-10 border border-green-100 w-full max-w-3xl">
+        <h1 class="text-4xl font-extrabold text-gray-800 mb-6 text-center leading-tight">
+            Your Summary is Ready!
+        </h1>
+        
+        {% if error_message %}
+            <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg relative mb-8" role="alert">
+                <strong class="font-bold">Something went wrong!</strong>
+                <span class="block sm:inline">{{ error_message }}</span>
+            </div>
+        {% else %}
+            <div class="mb-6 bg-green-50 p-4 rounded-xl border border-green-200">
+                <h2 class="text-xl font-semibold text-green-800 mb-2">Original File:</h2>
+                <p class="text-green-700 text-lg">{{ filename }}</p>
+            </div>
+
+            <div class="mb-8">
+                <h2 class="text-xl font-semibold text-gray-700 mb-2">Generated Summary:</h2>
+                <div class="bg-gray-50 p-6 rounded-xl border border-gray-200 min-h-[180px] overflow-auto max-h-[450px] text-gray-800 leading-relaxed text-lg shadow-inner">
+                    <p>{{ summary }}</p>
+                </div>
+            </div>
+
+            <div class="flex flex-wrap justify-center gap-4 mb-8">
+                <a href="{% url 'upload_pdf' %}"
+                   class="inline-flex items-center px-6 py-3 border border-transparent text-base font-medium rounded-lg shadow-md
+                          text-white bg-gradient-to-r from-green-500 to-emerald-500
+                          hover:from-green-600 hover:to-emerald-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-400
+                          transition duration-200 ease-in-out transform hover:-translate-y-1 hover:scale-105">
+                    Summarize Another PDF
+                </a>
+                {% if summary %}
+                    <a href="{% url 'display_summary' %}?download=true"
+                       class="inline-flex items-center px-6 py-3 border border-green-600 text-base font-medium rounded-lg shadow-md
+                              text-green-600 bg-white hover:bg-green-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-400
+                              transition duration-200 ease-in-out transform hover:-translate-y-1 hover:scale-105">
+                        Download Summary
+                    </a>
+                    <button id="expandSummaryBtn"
+                            class="inline-flex items-center px-6 py-3 border border-purple-600 text-base font-medium rounded-lg shadow-md
+                                   text-purple-600 bg-white hover:bg-purple-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-400
+                                   transition duration-200 ease-in-out transform hover:-translate-y-1 hover:scale-105">
+                        Expand Summary ✨
+                    </button>
+                    <button id="generateKeywordsBtn"
+                            class="inline-flex items-center px-6 py-3 border border-orange-600 text-base font-medium rounded-lg shadow-md
+                                   text-orange-600 bg-white hover:bg-orange-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-orange-400
+                                   transition duration-200 ease-in-out transform hover:-translate-y-1 hover:scale-105">
+                        Generate Keywords ✨
+                    </button>
+                {% endif %}
+            </div>
+
+            <div id="llmResultSection" class="mt-8 p-6 bg-white rounded-3xl shadow-lg border border-green-100 hidden">
+                <h2 id="llmResultTitle" class="text-2xl font-bold text-gray-800 mb-4"></h2>
+                <div id="llmResultContent" class="bg-green-50 p-6 rounded-xl border border-green-200 min-h-[150px] overflow-auto max-h-[400px] text-gray-800 leading-relaxed text-lg shadow-inner">
+                    <div id="llmLoadingSpinner" class="hidden flex items-center justify-center h-full text-green-600 font-semibold">
+                        <div class="spinner mr-3"></div>
+                        <span>Generating... Please wait.</span>
+                    </div>
+                    <p id="llmResultText"></p>
+                </div>
+            </div>
+        {% endif %}
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const expandSummaryBtn = document.getElementById('expandSummaryBtn');
+            const generateKeywordsBtn = document.getElementById('generateKeywordsBtn');
+            const llmResultSection = document.getElementById('llmResultSection');
+            const llmResultTitle = document.getElementById('llmResultTitle');
+            const llmResultContent = document.getElementById('llmResultContent');
+            const llmLoadingSpinner = document.getElementById('llmLoadingSpinner');
+            const llmResultText = document.getElementById('llmResultText');
+
+            // Function to show loading state
+            function showLoading(title) {
+                llmResultSection.classList.remove('hidden');
+                llmResultTitle.textContent = title;
+                llmResultText.textContent = '';
+                llmResultText.classList.remove('text-red-600'); // Clear previous error styling
+                llmLoadingSpinner.classList.remove('hidden');
+                llmResultContent.style.minHeight = '150px'; // Ensure spinner has space
+            }
+
+            // Function to hide loading state and display result
+            function showResult(text) {
+                llmLoadingSpinner.classList.add('hidden');
+                llmResultText.textContent = text;
+                llmResultContent.style.minHeight = '150px';
+            }
+
+            // Function to show error state
+            function showError(message) {
+                llmLoadingSpinner.classList.add('hidden');
+                llmResultText.textContent = `Error: ${message}`;
+                llmResultContent.style.minHeight = '150px';
+                llmResultText.classList.add('text-red-600'); // Add red text for errors
+            }
+
+            // Event listener for Expand Summary button
+            if (expandSummaryBtn) {
+                expandSummaryBtn.addEventListener('click', async function() {
+                    showLoading('Expanded Summary');
+                    try {
+                        const response = await fetch('/expand_summary/', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'X-CSRFToken': '{{ csrf_token }}' // Django CSRF token
+                            },
+                            body: JSON.stringify({ summary: '{{ summary|escapejs }}' }) // Pass current summary
+                        });
+                        const data = await response.json();
+                        if (response.ok) {
+                            showResult(data.expanded_summary);
+                        } else {
+                            showError(data.error || 'Failed to expand summary.');
+                        }
+                    } catch (error) {
+                        showError('Network error or server unreachable.');
+                        console.error('Error expanding summary:', error);
+                    }
+                });
+            }
+
+            // Event listener for Generate Keywords button
+            if (generateKeywordsBtn) {
+                generateKeywordsBtn.addEventListener('click', async function() {
+                    showLoading('Generated Keywords');
+                    try {
+                        const response = await fetch('/generate_keywords/', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'X-CSRFToken': '{{ csrf_token }}' // Django CSRF token
+                            },
+                            body: JSON.stringify({ summary: '{{ summary|escapejs }}' }) // Pass current summary
+                        });
+                        const data = await response.json();
+                        if (response.ok) {
+                            showResult(data.keywords);
+                        } else {
+                            showError(data.error || 'Failed to generate keywords.');
+                        }
+                    } catch (error) {
+                        showError('Network error or server unreachable.');
+                        console.error('Error generating keywords:', error);
+                    }
+                });
+            }
+        });
+    </script>
+</body>
+</html>
